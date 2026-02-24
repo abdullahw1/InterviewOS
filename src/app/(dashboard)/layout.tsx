@@ -78,6 +78,12 @@ export default async function DashboardLayout({
                   <DollarSign className="w-4 h-4 mr-2" />
                   Costs
                 </Link>
+                <Link
+                  href="/settings"
+                  className="inline-flex items-center px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                >
+                  Settings
+                </Link>
               </div>
             </div>
             <div className="flex items-center">
