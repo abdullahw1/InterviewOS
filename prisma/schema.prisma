@@ -2,13 +2,11 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider   = "postgresql"
-  extensions = [pgvector(map: "vector")]
+  provider = "postgresql"
 }
 
 model User {
@@ -31,13 +29,13 @@ model InterviewSession {
 }
 
 model ProjectChunk {
-  id         String                      @id @default(cuid())
+  id         String   @id @default(cuid())
   repoPath   String
   filePath   String
   chunkIndex Int
-  content    String                      @db.Text
-  embedding  Unsupported("vector(1536)")
-  createdAt  DateTime                    @default(now())
+  content    String   @db.Text
+  embedding  Json     // Store as JSON array instead of vector type
+  createdAt  DateTime @default(now())
 
   @@index([repoPath])
 }
