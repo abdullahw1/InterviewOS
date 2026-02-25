@@ -160,7 +160,8 @@ export async function generateEmbeddings(chunks: Chunk[]): Promise<number[][]> {
   
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
-    const texts = batch.map(c => c.content);
+    // Truncate each chunk to max 2000 chars to avoid token limits
+    const texts = batch.map(c => c.content.substring(0, 2000));
     
     const response = await trackedOpenAICall(
       'project-indexing',
@@ -236,6 +237,7 @@ export async function indexRepositories(repoPaths: string[]): Promise<{
     
     await prisma.projectChunk.create({
       data: {
+        repoName: chunk.repoPath.split('/').pop() || 'unknown',
         repoPath: chunk.repoPath,
         filePath: chunk.filePath,
         chunkIndex: chunk.chunkIndex,

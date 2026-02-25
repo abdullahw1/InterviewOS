@@ -163,10 +163,15 @@ ${transcript}
     // Save to database
     const interviewSession = await prisma.interviewSession.create({
       data: {
+        company: 'General',
+        difficulty: 'medium',
         interviewType,
-        question: question || null,
+        duration: 0,
         transcript,
         feedback,
+        skillScores: feedback.scores,
+        suggestions: feedback.improved_answer,
+        improvementAreas: {},
         overallScore: feedback.overall,
       },
     });

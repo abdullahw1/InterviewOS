@@ -5,25 +5,29 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { MessageSquare, FolderGit2, Code2, Briefcase } from 'lucide-react';
+import { MessageSquare, FolderGit2, Code2, Briefcase, DollarSign } from 'lucide-react';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function getDashboardStats() {
-  const [interviewCount, projectChunkCount, leetcodeCount, jobCount] = await Promise.all([
+  const [interviewCount, projectChunkCount, leetcodeCount, jobCount, costRecords] = await Promise.all([
     prisma.interviewSession.count(),
     prisma.projectChunk.count(),
     prisma.leetCodeEntry.count(),
     prisma.jobApplication.count(),
+    prisma.costRecord.findMany(),
   ]);
+
+  const totalCost = costRecords.reduce((sum: number, record: { estimatedCost: number }) => sum + record.estimatedCost, 0);
 
   return {
     interviewCount,
     projectChunkCount,
     leetcodeCount,
     jobCount,
+    totalCost,
   };
 }
 
@@ -67,6 +71,15 @@ export default async function DashboardPage() {
       stat: `${stats.jobCount} applications`,
       color: 'text-orange-600 dark:text-orange-400',
       bgColor: 'bg-orange-50 dark:bg-orange-900/20',
+    },
+    {
+      title: 'Cost Tracker',
+      description: 'Monitor your OpenAI API usage and costs',
+      icon: DollarSign,
+      href: '/costs',
+      stat: `$${stats.totalCost.toFixed(4)} spent`,
+      color: 'text-red-600 dark:text-red-400',
+      bgColor: 'bg-red-50 dark:bg-red-900/20',
     },
   ];
 

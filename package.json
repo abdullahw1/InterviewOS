@@ -51,5 +51,8 @@
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
-  }
+  },
+  "exclude": [
+    "prisma/seed.ts"
+  ]
 }

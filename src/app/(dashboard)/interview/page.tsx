@@ -83,13 +83,35 @@ export default function InterviewPage() {
         <div>
           <h1 className="text-2xl font-bold">Interview Practice</h1>
           <p className="mt-2 text-gray-600 dark:text-gray-400">
-            Record your answer and get AI-powered feedback
+            Practice with AI-powered interviews
           </p>
         </div>
-        <Link href="/interview/history">
-          <Button variant="outline">View History</Button>
-        </Link>
+        <div className="flex space-x-2">
+          <Link href="/interview/live">
+            <Button>Live AI Interview</Button>
+          </Link>
+          <Link href="/interview/history">
+            <Button variant="outline">View History</Button>
+          </Link>
+        </div>
       </div>
+
+      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 border-blue-200 dark:border-blue-800">
+        <CardHeader>
+          <CardTitle>🎯 New: Live AI Interview</CardTitle>
+          <CardDescription className="text-gray-700 dark:text-gray-300">
+            Experience a real interview with voice-based AI interviewer. Get company-specific questions, 
+            real-time feedback, and track your improvement over time.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/interview/live">
+            <Button size="lg" className="w-full">
+              Start Live Interview →
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

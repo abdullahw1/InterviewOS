@@ -19,25 +19,61 @@ model User {
 }
 
 model InterviewSession {
-  id            String   @id @default(cuid())
-  interviewType String
-  question      String?  @db.Text
-  transcript    String   @db.Text
-  feedback      Json
-  overallScore  Float
-  createdAt     DateTime @default(now())
+  id               String              @id @default(cuid())
+  company          String              @default("Unknown")
+  difficulty       String              @default("medium")
+  interviewType    String
+  duration         Int                 @default(0)
+  transcript       String              @db.Text
+  overallScore     Float
+  skillScores      Json                @default("{}")
+  feedback         Json
+  suggestions      String              @default("") @db.Text
+  improvementAreas Json                @default("{}")
+  createdAt        DateTime            @default(now())
+  questions        InterviewQuestion[]
+}
+
+model InterviewQuestion {
+  id                String           @id @default(cuid())
+  sessionId         String
+  session           InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionText      String           @db.Text
+  aiResponse        String?          @db.Text
+  userResponse      String           @db.Text
+  score             Float
+  feedback          String           @db.Text
+  timeSpent         Int              // in seconds
+  createdAt         DateTime         @default(now())
+
+  @@index([sessionId])
 }
 
 model ProjectChunk {
   id         String   @id @default(cuid())
+  repoName   String
   repoPath   String
   filePath   String
   chunkIndex Int
   content    String   @db.Text
   embedding  Json     // Store as JSON array instead of vector type
+  metadata   Json     @default("{}") // { language, fileType, summary, etc }
   createdAt  DateTime @default(now())
 
+  @@index([repoName])
   @@index([repoPath])
+}
+
+model ProjectSummary {
+  id          String   @id @default(cuid())
+  repoName    String   @unique
+  repoPath    String
+  description String   @db.Text
+  techStack   Json     // array of technologies
+  highlights  Json     // key features/achievements
+  embedding   Json     // embedding of the summary
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model LeetCodeEntry {

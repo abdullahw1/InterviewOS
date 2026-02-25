@@ -115,11 +115,9 @@ export default async function InterviewHistoryPage() {
                               </div>
                             )}
                           </div>
-                          {session.question && (
-                            <p className="mt-2 text-sm text-gray-700 dark:text-gray-300 line-clamp-1">
-                              {session.question}
-                            </p>
-                          )}
+                          <p className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                            {session.company} • {session.difficulty}
+                          </p>
                         </div>
                         <div className="text-right">
                           <div className="text-2xl font-bold">

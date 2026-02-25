@@ -69,12 +69,8 @@ export default async function InterviewSessionPage({
             </p>
           </div>
         </div>
-        <Link
-          href={`/interview?type=${session.interviewType}&question=${encodeURIComponent(
-            session.question || ''
-          )}`}
-        >
-          <Button variant="outline">Redo This Question</Button>
+        <Link href="/interview">
+          <Button variant="outline">Start New Interview</Button>
         </Link>
       </div>
 
@@ -122,16 +118,7 @@ export default async function InterviewSessionPage({
         </Card>
       </div>
 
-      {session.question && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Question</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-gray-700 dark:text-gray-300">{session.question}</p>
-          </CardContent>
-        </Card>
-      )}
+      {/* Questions section removed - now using InterviewQuestion model */}
 
       <Card>
         <CardHeader>
