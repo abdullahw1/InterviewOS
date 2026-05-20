@@ -201,7 +201,10 @@ async function main() {
 
   for (const question of sampleQuestions) {
     await prisma.interviewSession.create({
-      data: question,
+      data: {
+        ...question,
+        user: { connect: { id: admin.id } },
+      },
     });
   }
 

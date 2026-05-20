@@ -238,6 +238,13 @@ export default function LiveInterviewPage() {
 
     setState('processing');
 
+    // Check if we have a valid sessionId
+    if (!sessionId) {
+      toast.error('No interview session found');
+      setState('setup');
+      return;
+    }
+
     try {
       const response = await fetch('/api/interview/live/poll', {
         method: 'POST',
@@ -251,10 +258,13 @@ export default function LiveInterviewPage() {
       if (response.ok) {
         const data = await response.json();
         router.push(`/interview/${data.sessionId}`);
+      } else {
+        throw new Error('Failed to end interview');
       }
     } catch (error) {
       console.error('Error ending interview:', error);
       toast.error('Failed to end interview');
+      setState('setup');
     }
   };
 

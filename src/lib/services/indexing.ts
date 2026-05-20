@@ -1,15 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import OpenAI from 'openai';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { prisma } from '@/lib/prisma';
 import { getModelConfig } from '@/lib/config/models';
 import { trackedOpenAICall } from '@/lib/services/cost-tracker';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -235,16 +229,24 @@ export async function indexRepositories(repoPaths: string[]): Promise<{
     const chunk = allChunks[i];
     const embedding = embeddings[i];
     
-    await prisma.projectChunk.create({
+    // Create chunk without embedding (Prisma can't handle Unsupported vector type directly)
+    const created = await prisma.projectChunk.create({
       data: {
         repoName: chunk.repoPath.split('/').pop() || 'unknown',
         repoPath: chunk.repoPath,
         filePath: chunk.filePath,
         chunkIndex: chunk.chunkIndex,
         content: chunk.content,
-        embedding: embedding, // Store as JSON array
-      },
+      } as any,
     });
+
+    // Store embedding as native pgvector value
+    const embeddingStr = `[${embedding.join(',')}]`;
+    await prisma.$executeRaw`
+      UPDATE "ProjectChunk"
+      SET embedding = ${embeddingStr}::vector
+      WHERE id = ${created.id}
+    `;
   }
   
   return {

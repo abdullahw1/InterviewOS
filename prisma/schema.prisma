@@ -2,24 +2,31 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector]
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  resumeText   String?  @db.Text
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String               @id @default(cuid())
+  email             String               @unique
+  passwordHash      String
+  resumeText        String?              @db.Text
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  interviewSessions InterviewSession[]
+  teachBackSessions TeachBackSession[]
+  quizSessions      ProjectQuizSession[]
 }
 
 model InterviewSession {
   id               String              @id @default(cuid())
+  userId           String
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   company          String              @default("Unknown")
   difficulty       String              @default("medium")
   interviewType    String
@@ -30,8 +37,13 @@ model InterviewSession {
   feedback         Json
   suggestions      String              @default("") @db.Text
   improvementAreas Json                @default("{}")
+  vapiCallId       String?
+  recordingUrl     String?
+  callDuration     Int?
   createdAt        DateTime            @default(now())
   questions        InterviewQuestion[]
+
+  @@index([userId])
 }
 
 model InterviewQuestion {
@@ -56,7 +68,7 @@ model ProjectChunk {
   filePath   String
   chunkIndex Int
   content    String   @db.Text
-  embedding  Json     // Store as JSON array instead of vector type
+  embedding  Unsupported("vector(1536)")?
   metadata   Json     @default("{}") // { language, fileType, summary, etc }
   createdAt  DateTime @default(now())
 
@@ -71,7 +83,7 @@ model ProjectSummary {
   description String   @db.Text
   techStack   Json     // array of technologies
   highlights  Json     // key features/achievements
-  embedding   Json     // embedding of the summary
+  embedding   Unsupported("vector(1536)")?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -114,4 +126,53 @@ model CostRecord {
   outputTokens  Int
   estimatedCost Float
   createdAt     DateTime @default(now())
+}
+
+model TeachBackSession {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic              String
+  category           String
+  difficulty         String
+  transcript         String   @db.Text
+  clarityScore       Float
+  accuracyScore      Float
+  depthScore         Float
+  communicationScore Float
+  overallScore       Float
+  feedback           Json
+  vapiCallId         String?
+  callDuration       Int?
+  recordingUrl       String?
+  createdAt          DateTime @default(now())
+
+  @@index([userId])
+}
+
+model ProjectQuizSession {
+  id              String                @id @default(cuid())
+  userId          String
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repositoryNames Json
+  overallScore    Float?
+  weakAreas       Json                  @default("[]")
+  createdAt       DateTime              @default(now())
+  questions       ProjectQuizQuestion[]
+
+  @@index([userId])
+}
+
+model ProjectQuizQuestion {
+  id             String             @id @default(cuid())
+  quizSessionId  String
+  quizSession    ProjectQuizSession @relation(fields: [quizSessionId], references: [id], onDelete: Cascade)
+  questionText   String             @db.Text
+  userAnswer     String?            @db.Text
+  correctContext String             @db.Text
+  score          Float?
+  feedback       String?            @db.Text
+  createdAt      DateTime           @default(now())
+
+  @@index([quizSessionId])
 }

@@ -1,11 +1,5 @@
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import OpenAI from 'openai';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+import { prisma } from '@/lib/prisma';
 
 // Pricing per 1M tokens (as of 2024)
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {

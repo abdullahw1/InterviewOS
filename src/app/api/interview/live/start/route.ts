@@ -2,13 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
+import { prisma } from '@/lib/prisma';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -57,13 +51,19 @@ export async function POST(request: NextRequest) {
     // Get user's resume and project context
     const user = await prisma.user.findUnique({
       where: { email: session.user.email },
-      select: { resumeText: true },
+      select: { id: true, resumeText: true },
     });
 
     // Get project summaries for context
-    const projects = await prisma.projectSummary.findMany({
-      take: 5,
-    });
+    let projects: { repoName: string; description: string }[] = [];
+    try {
+      projects = await prisma.projectSummary.findMany({
+        take: 5,
+      });
+    } catch (error) {
+      console.warn('Could not fetch project summaries:', error);
+      // Continue without project context
+    }
 
     const companyKey = company.toLowerCase().replace(/\s+/g, '');
     const companyContext = COMPANY_CONTEXTS[companyKey] || COMPANY_CONTEXTS.default;
@@ -97,6 +97,7 @@ Conduct a professional interview. Ask one question at a time. Listen to their re
     // Create interview session
     const interviewSession = await prisma.interviewSession.create({
       data: {
+        user: { connect: { id: user!.id } },
         company,
         difficulty,
         interviewType,

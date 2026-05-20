@@ -1,13 +1,7 @@
 import OpenAI from 'openai';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { prisma } from '@/lib/prisma';
 import * as fs from 'fs';
 import * as path from 'path';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -52,15 +46,14 @@ export async function indexProject(repoPath: string): Promise<void> {
   // Step 3: Create embedding for summary
   const summaryEmbedding = await createEmbedding(summary.description);
   
-  // Step 4: Save project summary
-  await prisma.projectSummary.upsert({
+  // Step 4: Save project summary (upsert without embedding, then store embedding via raw SQL)
+  const savedSummary = await prisma.projectSummary.upsert({
     where: { repoName },
     update: {
       repoPath,
       description: summary.description,
       techStack: summary.techStack,
       highlights: summary.highlights,
-      embedding: summaryEmbedding,
       updatedAt: new Date(),
     },
     create: {
@@ -69,9 +62,16 @@ export async function indexProject(repoPath: string): Promise<void> {
       description: summary.description,
       techStack: summary.techStack,
       highlights: summary.highlights,
-      embedding: summaryEmbedding,
-    },
+    } as any,
   });
+
+  // Store embedding as native pgvector value
+  const summaryEmbeddingStr = `[${summaryEmbedding.join(',')}]`;
+  await prisma.$executeRaw`
+    UPDATE "ProjectSummary"
+    SET embedding = ${summaryEmbeddingStr}::vector
+    WHERE id = ${savedSummary.id}
+  `;
   
   // Step 5: Index important files
   await indexRepositoryFiles(repoPath, repoName);
@@ -246,20 +246,28 @@ async function indexRepositoryFiles(repoPath: string, repoName: string): Promise
         const chunk = chunks[i];
         const embedding = await createEmbedding(chunk);
         
-        await prisma.projectChunk.create({
+        // Create chunk without embedding (Prisma can't handle Unsupported vector type directly)
+        const created = await prisma.projectChunk.create({
           data: {
             repoName,
             repoPath,
             filePath: relativePath,
             chunkIndex: i,
             content: chunk,
-            embedding,
             metadata: {
               language: path.extname(filePath),
               fileType: getFileType(filePath),
             },
-          },
+          } as any,
         });
+
+        // Store embedding as native pgvector value
+        const embeddingStr = `[${embedding.join(',')}]`;
+        await prisma.$executeRaw`
+          UPDATE "ProjectChunk"
+          SET embedding = ${embeddingStr}::vector
+          WHERE id = ${created.id}
+        `;
       }
     } catch (error) {
       console.error(`Error indexing file ${filePath}:`, error);
@@ -332,30 +340,16 @@ export async function indexAllProjects(projectPaths: string[]): Promise<void> {
 
 export async function searchProjects(query: string, limit: number = 5): Promise<any[]> {
   const queryEmbedding = await createEmbedding(query);
-  
-  // Get all project summaries and calculate similarity
-  const projects = await prisma.projectSummary.findMany();
-  
-  const results = projects.map(project => {
-    const similarity = cosineSimilarity(queryEmbedding, project.embedding as number[]);
-    return { ...project, similarity };
-  });
-  
-  return results
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, limit);
-}
+  const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  // Use native pgvector cosine distance query instead of in-memory computation
+  const results = await prisma.$queryRaw<any[]>`
+    SELECT id, "repoName", "repoPath", description, "techStack", highlights,
+           1 - (embedding <=> ${embeddingStr}::vector) as similarity
+    FROM "ProjectSummary"
+    ORDER BY embedding <=> ${embeddingStr}::vector
+    LIMIT ${limit}
+  `;
+
+  return results;
 }

@@ -1,12 +1,6 @@
 import OpenAI from 'openai';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { prisma } from '@/lib/prisma';
 import { getModelConfig } from '@/lib/config/models';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -14,82 +8,97 @@ const openai = new OpenAI({
 
 interface SearchResult {
   id: string;
-  repoPath: string;
+  repoName: string;
   filePath: string;
   chunkIndex: number;
   content: string;
   similarity: number;
 }
 
-// Calculate cosine similarity between two vectors
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dotProduct = 0;
-  let normA = 0;
-  let normB = 0;
-  
-  for (let i = 0; i < a.length; i++) {
-    dotProduct += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+interface SummarySearchResult {
+  id: string;
+  repoName: string;
+  description: string;
+  techStack: unknown;
+  highlights: unknown;
+  similarity: number;
+}
+
+async function createEmbedding(text: string): Promise<number[]> {
+  const modelConfig = getModelConfig();
+  const truncatedText = text.substring(0, 2000);
+
+  const response = await openai.embeddings.create({
+    model: modelConfig.embedding,
+    input: truncatedText,
+  });
+
+  return response.data[0].embedding;
 }
 
 export async function searchSimilarChunks(
   query: string,
-  projectName?: string,
+  repoNames?: string[],
   topK: number = 5
 ): Promise<SearchResult[]> {
-  const modelConfig = getModelConfig();
-  
-  // Generate embedding for the query
-  const embeddingResponse = await openai.embeddings.create({
-    model: modelConfig.embedding,
-    input: query,
-  });
-  
-  const queryEmbedding = embeddingResponse.data[0].embedding;
-  
-  // Fetch all chunks (or filter by project if specified)
-  const chunks = await prisma.projectChunk.findMany({
-    where: projectName ? { repoPath: { contains: projectName } } : undefined,
-  });
-  
-  // Calculate similarities
-  const results: SearchResult[] = chunks.map(chunk => {
-    const chunkEmbedding = chunk.embedding as number[];
-    const similarity = cosineSimilarity(queryEmbedding, chunkEmbedding);
-    
-    return {
-      id: chunk.id,
-      repoPath: chunk.repoPath,
-      filePath: chunk.filePath,
-      chunkIndex: chunk.chunkIndex,
-      content: chunk.content,
-      similarity,
-    };
-  });
-  
-  // Sort by similarity and take top K
-  results.sort((a, b) => b.similarity - a.similarity);
-  
+  const queryEmbedding = await createEmbedding(query);
+  const embeddingStr = `[${queryEmbedding.join(',')}]`;
+
+  let results: SearchResult[];
+
+  if (repoNames && repoNames.length > 0) {
+    results = await prisma.$queryRaw<SearchResult[]>`
+      SELECT id, "repoName", "filePath", "chunkIndex", content,
+             1 - (embedding <=> ${embeddingStr}::vector) as similarity
+      FROM "ProjectChunk"
+      WHERE "repoName" = ANY(${repoNames})
+      ORDER BY embedding <=> ${embeddingStr}::vector
+      LIMIT ${topK * 2}
+    `;
+  } else {
+    results = await prisma.$queryRaw<SearchResult[]>`
+      SELECT id, "repoName", "filePath", "chunkIndex", content,
+             1 - (embedding <=> ${embeddingStr}::vector) as similarity
+      FROM "ProjectChunk"
+      ORDER BY embedding <=> ${embeddingStr}::vector
+      LIMIT ${topK * 2}
+    `;
+  }
+
   // Limit total context size (approximately 4000 tokens = ~16000 characters)
   const maxContextSize = 16000;
   let currentSize = 0;
   const filteredResults: SearchResult[] = [];
-  
-  for (const result of results.slice(0, topK * 2)) {
+
+  for (const result of results) {
     if (currentSize + result.content.length > maxContextSize) {
       break;
     }
     filteredResults.push(result);
     currentSize += result.content.length;
-    
+
     if (filteredResults.length >= topK) {
       break;
     }
   }
-  
+
   return filteredResults;
+}
+
+export async function searchSimilarSummaries(
+  query: string,
+  topK: number = 5
+): Promise<SummarySearchResult[]> {
+  const queryEmbedding = await createEmbedding(query);
+  const embeddingStr = `[${queryEmbedding.join(',')}]`;
+
+  const results = await prisma.$queryRaw<SummarySearchResult[]>`
+    SELECT id, "repoName", description, "techStack", highlights,
+           1 - (embedding <=> ${embeddingStr}::vector) as similarity
+    FROM "ProjectSummary"
+    ORDER BY embedding <=> ${embeddingStr}::vector
+    LIMIT ${topK}
+  `;
+
+  return results;
 }

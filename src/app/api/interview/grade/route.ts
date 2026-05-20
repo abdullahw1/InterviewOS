@@ -2,16 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { prisma } from '@/lib/prisma';
 import { getModelConfig, TOKEN_CAPS } from '@/lib/config/models';
 import { trackedOpenAICall } from '@/lib/services/cost-tracker';
 import { z } from 'zod';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -56,7 +50,7 @@ export async function POST(request: NextRequest) {
     // Fetch user's resume text
     const user = await prisma.user.findUnique({
       where: { email: session.user.email },
-      select: { resumeText: true },
+      select: { id: true, resumeText: true },
     });
 
     const resumeText = user?.resumeText;
@@ -163,6 +157,7 @@ ${transcript}
     // Save to database
     const interviewSession = await prisma.interviewSession.create({
       data: {
+        user: { connect: { id: user!.id } },
         company: 'General',
         difficulty: 'medium',
         interviewType,

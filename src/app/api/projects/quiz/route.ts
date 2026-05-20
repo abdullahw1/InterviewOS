@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       // Search for relevant code chunks
       const chunks = await searchSimilarChunks(
         `code implementation architecture design patterns ${projectName}`,
-        projectName,
+        [projectName],
         5
       );
 
@@ -132,7 +132,7 @@ Generate a question that tests understanding of the code architecture, design pa
       }
 
       // Get relevant context
-      const chunks = await searchSimilarChunks(question, projectName, 3);
+      const chunks = await searchSimilarChunks(question, projectName ? [projectName] : undefined, 3);
       const context = chunks
         .map(c => `${c.filePath}:\n${c.content}`)
         .join('\n\n');
