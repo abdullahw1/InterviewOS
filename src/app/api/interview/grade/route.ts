@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { getModelConfig, TOKEN_CAPS } from '@/lib/config/models';
-import { trackedOpenAICall } from '@/lib/services/cost-tracker';
+import { TOKEN_CAPS } from '@/lib/config/models';
+import { chatWithClaude } from '@/lib/claude';
 import { z } from 'zod';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-// Define the feedback schema
 const FeedbackSchema = z.object({
   scores: z.object({
     clarity: z.number().min(0).max(5),
@@ -41,23 +35,17 @@ export async function POST(request: NextRequest) {
     const { transcript, interviewType, question } = body;
 
     if (!transcript || !interviewType) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // Fetch user's resume text
     const user = await prisma.user.findUnique({
       where: { email: session.user.email },
       select: { id: true, resumeText: true },
     });
 
     const resumeText = user?.resumeText;
-    const modelConfig = getModelConfig();
 
-    // Build the prompt
-    let prompt = `You are an expert interview coach. Grade this ${interviewType} interview answer.
+    let userMessage = `You are an expert interview coach. Grade this ${interviewType} interview answer.
 
 Question: ${question || 'General interview question'}
 
@@ -66,95 +54,30 @@ ${transcript}
 `;
 
     if (resumeText) {
-      prompt += `\n\nCandidate's Resume Context:\n${resumeText.substring(0, 1000)}`;
+      userMessage += `\n\nCandidate's Resume Context:\n${resumeText.substring(0, 1000)}`;
     }
 
-    prompt += `\n\nProvide detailed feedback in the following JSON structure:
-- scores: Rate 0-5 for clarity, structure, technical_depth, ownership, concision
-- overall: Overall score 0-5
-- red_flags: Array of concerning statements or gaps
-- missing_resume_signal: Array of resume elements not mentioned (if resume provided)
-- improved_answer: A rewritten version of their answer
-- followups: Array of follow-up questions an interviewer might ask
-- drills: Array of specific practice recommendations`;
+    userMessage += `\n\nProvide feedback as JSON:
+{
+  "scores": { "clarity": 0-5, "structure": 0-5, "technical_depth": 0-5, "ownership": 0-5, "concision": 0-5 },
+  "overall": 0-5,
+  "red_flags": ["..."],
+  "missing_resume_signal": ["..."],
+  "improved_answer": "...",
+  "followups": ["..."],
+  "drills": ["..."]
+}`;
 
-    const completion = await trackedOpenAICall(
-      'interview-grading',
-      modelConfig.analysis,
-      async () => {
-        return await openai.chat.completions.create({
-          model: modelConfig.analysis,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an expert interview coach providing structured feedback.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-          response_format: {
-            type: 'json_schema',
-            json_schema: {
-              name: 'interview_feedback',
-              strict: true,
-              schema: {
-                type: 'object',
-                properties: {
-                  scores: {
-                    type: 'object',
-                    properties: {
-                      clarity: { type: 'number' },
-                      structure: { type: 'number' },
-                      technical_depth: { type: 'number' },
-                      ownership: { type: 'number' },
-                      concision: { type: 'number' },
-                    },
-                    required: ['clarity', 'structure', 'technical_depth', 'ownership', 'concision'],
-                    additionalProperties: false,
-                  },
-                  overall: { type: 'number' },
-                  red_flags: {
-                    type: 'array',
-                    items: { type: 'string' },
-                  },
-                  missing_resume_signal: {
-                    type: 'array',
-                    items: { type: 'string' },
-                  },
-                  improved_answer: { type: 'string' },
-                  followups: {
-                    type: 'array',
-                    items: { type: 'string' },
-                  },
-                  drills: {
-                    type: 'array',
-                    items: { type: 'string' },
-                  },
-                },
-                required: ['scores', 'overall', 'red_flags', 'missing_resume_signal', 'improved_answer', 'followups', 'drills'],
-                additionalProperties: false,
-              },
-            },
-          },
-          max_tokens: TOKEN_CAPS.grading,
-        });
-      },
-      (result) => ({
-        inputTokens: result.usage?.prompt_tokens || 0,
-        outputTokens: result.usage?.completion_tokens || 0,
-      })
-    );
-
-    const feedbackText = completion.choices[0].message.content;
-    if (!feedbackText) {
-      throw new Error('No feedback generated');
-    }
+    const feedbackText = await chatWithClaude({
+      feature: 'interview-grading',
+      systemPrompt: 'You are an expert interview coach providing structured feedback. Respond with valid JSON only.',
+      userMessage,
+      maxTokens: TOKEN_CAPS.grading,
+      json: true,
+    });
 
     const feedback: FeedbackJSON = JSON.parse(feedbackText);
 
-    // Save to database
     const interviewSession = await prisma.interviewSession.create({
       data: {
         user: { connect: { id: user!.id } },
@@ -171,15 +94,9 @@ ${transcript}
       },
     });
 
-    return NextResponse.json({
-      sessionId: interviewSession.id,
-      feedback,
-    });
+    return NextResponse.json({ sessionId: interviewSession.id, feedback });
   } catch (error) {
     console.error('Grading error:', error);
-    return NextResponse.json(
-      { error: 'Failed to grade interview' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to grade interview' }, { status: 500 });
   }
 }

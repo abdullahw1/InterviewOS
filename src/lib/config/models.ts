@@ -1,15 +1,13 @@
+export const OPENAI_MODEL = 'gpt-4o-mini';
+
 export interface ModelConfig {
-  embedding: string;
-  transcription: string;
   analysis: string;
   analysisPremium: string;
 }
 
 export function getModelConfig(): ModelConfig {
   return {
-    embedding: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
-    transcription: process.env.TRANSCRIPTION_MODEL || 'whisper-1',
-    analysis: process.env.ANALYSIS_MODEL || 'gpt-4o-mini',
+    analysis: process.env.ANALYSIS_MODEL || OPENAI_MODEL,
     analysisPremium: process.env.ANALYSIS_PREMIUM_MODEL || 'gpt-4o',
   };
 }

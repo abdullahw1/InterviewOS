@@ -3,15 +3,29 @@ import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { MessageSquare, FolderGit2, Code2, Briefcase, DollarSign } from 'lucide-react';
 
-async function getDashboardStats() {
-  const [interviewCount, projectChunkCount, leetcodeCount, jobCount, costRecords] = await Promise.all([
+async function getDashboardStats(userId: string) {
+  const [interviewCount, projectChunkCount, leetcodeCount, jobCount, costRecords, recentDrills] = await Promise.all([
     prisma.interviewSession.count(),
     prisma.projectChunk.count(),
     prisma.leetCodeEntry.count(),
     prisma.jobApplication.count(),
     prisma.costRecord.findMany(),
+    prisma.drill.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        mode: true,
+        status: true,
+        overallScore: true,
+        createdAt: true,
+        configJson: true,
+      },
+    }),
   ]);
 
   const totalCost = costRecords.reduce((sum: number, record: { estimatedCost: number }) => sum + record.estimatedCost, 0);
@@ -22,12 +36,13 @@ async function getDashboardStats() {
     leetcodeCount,
     jobCount,
     totalCost,
+    recentDrills,
   };
 }
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
-  const stats = await getDashboardStats();
+  const stats = await getDashboardStats(session?.user?.id ?? '');
 
   const features = [
     {
@@ -43,7 +58,7 @@ export default async function DashboardPage() {
       title: 'Project Drills',
       description: 'Quiz yourself on your own codebase',
       icon: FolderGit2,
-      href: '/projects',
+      href: '/drill/new',
       stat: `${stats.projectChunkCount} chunks indexed`,
       color: 'text-green-600 dark:text-green-400',
       bgColor: 'bg-green-50 dark:bg-green-900/20',
@@ -78,35 +93,35 @@ export default async function DashboardPage() {
   ];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-          Welcome back, {session?.user?.email?.split('@')[0]}!
+        <h1 className="text-2xl font-semibold">
+          Welcome back, {session?.user?.email?.split('@')[0]}
         </h1>
-        <p className="mt-2 text-gray-600 dark:text-gray-400">
+        <p className="mt-1 text-sm text-muted-foreground">
           Your interview prep command center
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {features.map((feature) => {
           const Icon = feature.icon;
           return (
             <Link key={feature.href} href={feature.href}>
-              <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
-                <CardHeader>
-                  <div className="flex items-center space-x-4">
-                    <div className={`p-3 rounded-lg ${feature.bgColor}`}>
-                      <Icon className={`w-6 h-6 ${feature.color}`} />
+              <Card className="hover:shadow-md transition-all hover:border-border/80 cursor-pointer h-full">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-md ${feature.bgColor} flex-shrink-0`}>
+                      <Icon className={`w-4 h-4 ${feature.color}`} />
                     </div>
                     <div>
-                      <CardTitle>{feature.title}</CardTitle>
-                      <CardDescription>{feature.description}</CardDescription>
+                      <CardTitle className="text-sm font-semibold">{feature.title}</CardTitle>
+                      <CardDescription className="text-xs mt-0.5">{feature.description}</CardDescription>
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                <CardContent className="pt-0">
+                  <p className="text-xs text-muted-foreground font-mono">
                     {feature.stat}
                   </p>
                 </CardContent>
@@ -115,6 +130,53 @@ export default async function DashboardPage() {
           );
         })}
       </div>
+
+      {stats.recentDrills.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold mb-2">Recent Drills</h2>
+          <div className="rounded-lg border divide-y">
+            {stats.recentDrills.map((drill) => {
+              const config = drill.configJson as Record<string, unknown>;
+              const statusMap: Record<string, string> = {
+                ended: 'Completed',
+                in_progress: 'In Progress',
+                pending: 'Pending',
+                cost_capped: 'Cost Capped',
+                failed: 'Failed',
+              };
+              return (
+                <Link key={drill.id} href={`/drill/${drill.id}`} className="flex items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors first:rounded-t-lg last:rounded-b-lg">
+                  <div className="flex items-center gap-3">
+                    <Badge variant={drill.mode === 'Voice' ? 'default' : 'secondary'} className="text-xs">
+                      {drill.mode}
+                    </Badge>
+                    <span className="text-sm text-muted-foreground">
+                      {String(config.difficultyTier ?? '')} &middot;{' '}
+                      {new Date(drill.createdAt).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {drill.overallScore !== null && (
+                      <span className={`font-mono text-xs font-semibold ${
+                        drill.overallScore >= 4 ? 'text-green-600' :
+                        drill.overallScore >= 2.5 ? 'text-amber-600' : 'text-red-600'
+                      }`}>
+                        {drill.overallScore}/5.0
+                      </span>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {statusMap[drill.status] ?? drill.status}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { searchSimilarChunks } from '@/lib/services/vector-search';
-import { getModelConfig, TOKEN_CAPS } from '@/lib/config/models';
-import { trackedOpenAICall } from '@/lib/services/cost-tracker';
+import { TOKEN_CAPS } from '@/lib/config/models';
+import { chatWithClaude } from '@/lib/claude';
 import { z } from 'zod';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 const QuestionSchema = z.object({
   question: z.string(),
@@ -39,15 +34,10 @@ export async function POST(request: NextRequest) {
     const { action, projectName, userAnswer, question, codeSnippet } = body;
 
     if (action === 'generate') {
-      // Generate a quiz question
       if (!projectName) {
-        return NextResponse.json(
-          { error: 'Project name required' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'Project name required' }, { status: 400 });
       }
 
-      // Search for relevant code chunks
       const chunks = await searchSimilarChunks(
         `code implementation architecture design patterns ${projectName}`,
         [projectName],
@@ -65,65 +55,25 @@ export async function POST(request: NextRequest) {
         .map(c => `File: ${c.filePath}\n\n${c.content}`)
         .join('\n\n---\n\n');
 
-      const modelConfig = getModelConfig();
-
-      const completion = await trackedOpenAICall(
-        'project-quiz-generate',
-        modelConfig.analysis,
-        async () => {
-          return await openai.chat.completions.create({
-            model: modelConfig.analysis,
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a technical interviewer creating questions about a codebase.',
-              },
-              {
-                role: 'user',
-                content: `Based on this code from ${projectName}, create a technical interview question.
+      const responseText = await chatWithClaude({
+        feature: 'project-quiz-generate',
+        systemPrompt: 'You are a technical interviewer creating questions about a codebase. Respond with valid JSON only.',
+        userMessage: `Based on this code from ${projectName}, create a technical interview question.
 
 Code Context:
 ${context.substring(0, 3000)}
 
-Generate a question that tests understanding of the code architecture, design patterns, or implementation details. Include a relevant code snippet.`,
-              },
-            ],
-            response_format: {
-              type: 'json_schema',
-              json_schema: {
-                name: 'quiz_question',
-                strict: true,
-                schema: {
-                  type: 'object',
-                  properties: {
-                    question: { type: 'string' },
-                    code_snippet: { type: 'string' },
-                    context: { type: 'string' },
-                  },
-                  required: ['question', 'code_snippet', 'context'],
-                  additionalProperties: false,
-                },
-              },
-            },
-            max_tokens: TOKEN_CAPS.quiz,
-          });
-        },
-        (result) => ({
-          inputTokens: result.usage?.prompt_tokens || 0,
-          outputTokens: result.usage?.completion_tokens || 0,
-        })
-      );
+Generate a question that tests understanding of the code architecture, design patterns, or implementation details. Include a relevant code snippet.
 
-      const responseText = completion.choices[0].message.content;
-      if (!responseText) {
-        throw new Error('No response generated');
-      }
+Respond as JSON: { "question": "...", "code_snippet": "...", "context": "..." }`,
+        maxTokens: TOKEN_CAPS.quiz,
+        json: true,
+      });
 
       const questionData: QuestionJSON = JSON.parse(responseText);
-
       return NextResponse.json(questionData);
+
     } else if (action === 'grade') {
-      // Grade a user's answer
       if (!userAnswer || !question || !codeSnippet) {
         return NextResponse.json(
           { error: 'Missing required fields for grading' },
@@ -131,28 +81,15 @@ Generate a question that tests understanding of the code architecture, design pa
         );
       }
 
-      // Get relevant context
       const chunks = await searchSimilarChunks(question, projectName ? [projectName] : undefined, 3);
       const context = chunks
         .map(c => `${c.filePath}:\n${c.content}`)
         .join('\n\n');
 
-      const modelConfig = getModelConfig();
-
-      const completion = await trackedOpenAICall(
-        'project-quiz-grade',
-        modelConfig.analysis,
-        async () => {
-          return await openai.chat.completions.create({
-            model: modelConfig.analysis,
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a technical interviewer grading answers about a codebase.',
-              },
-              {
-                role: 'user',
-                content: `Question: ${question}
+      const responseText = await chatWithClaude({
+        feature: 'project-quiz-grade',
+        systemPrompt: 'You are a technical interviewer grading answers about a codebase. Respond with valid JSON only.',
+        userMessage: `Question: ${question}
 
 Code Snippet:
 ${codeSnippet}
@@ -163,65 +100,20 @@ ${userAnswer}
 Actual Code Context:
 ${context.substring(0, 2000)}
 
-Grade the answer and provide feedback.`,
-              },
-            ],
-            response_format: {
-              type: 'json_schema',
-              json_schema: {
-                name: 'quiz_grade',
-                strict: true,
-                schema: {
-                  type: 'object',
-                  properties: {
-                    score: { type: 'number' },
-                    what_you_missed: {
-                      type: 'array',
-                      items: { type: 'string' },
-                    },
-                    strong_points: {
-                      type: 'array',
-                      items: { type: 'string' },
-                    },
-                    corrected_answer: { type: 'string' },
-                    followups: {
-                      type: 'array',
-                      items: { type: 'string' },
-                    },
-                  },
-                  required: ['score', 'what_you_missed', 'strong_points', 'corrected_answer', 'followups'],
-                  additionalProperties: false,
-                },
-              },
-            },
-            max_tokens: TOKEN_CAPS.quiz,
-          });
-        },
-        (result) => ({
-          inputTokens: result.usage?.prompt_tokens || 0,
-          outputTokens: result.usage?.completion_tokens || 0,
-        })
-      );
-
-      const responseText = completion.choices[0].message.content;
-      if (!responseText) {
-        throw new Error('No response generated');
-      }
+Grade the answer and provide feedback.
+Respond as JSON: { "score": 0-5, "what_you_missed": [...], "strong_points": [...], "corrected_answer": "...", "followups": [...] }`,
+        maxTokens: TOKEN_CAPS.quiz,
+        json: true,
+      });
 
       const gradeData: GradeJSON = JSON.parse(responseText);
-
       return NextResponse.json(gradeData);
+
     } else {
-      return NextResponse.json(
-        { error: 'Invalid action. Use "generate" or "grade"' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
   } catch (error) {
     console.error('Quiz error:', error);
-    return NextResponse.json(
-      { error: 'Failed to process quiz request' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to process quiz request' }, { status: 500 });
   }
 }

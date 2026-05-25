@@ -39,3 +39,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# project file storage (uploaded/cloned repos, runtime data)
+.projects-storage/
+
+# personal/scratch files
+*.txt

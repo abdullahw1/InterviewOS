@@ -1,257 +1,46 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import OpenAI from 'openai';
-import { prisma } from '@/lib/prisma';
-import { getModelConfig } from '@/lib/config/models';
-import { trackedOpenAICall } from '@/lib/services/cost-tracker';
+/**
+ * Legacy shim. The buggy parent-folder REPO_PATHS scan that lived here
+ * has been replaced by `local-discovery.ts` + `project-indexer.ts`.
+ * This module re-exports the new project-scoped helpers so existing
+ * import paths keep compiling. New code should import from those
+ * modules directly.
+ *
+ * Validates: Requirements 3.1 - 3.6, 4.1 - 4.8, 5.3
+ */
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { discoverLocalProjects } from '@/lib/services/local-discovery';
+import {
+  indexAllProjects,
+  indexProject,
+  indexProjectById,
+} from '@/lib/services/project-indexer';
 
-// File extensions to include
-const INCLUDE_EXTENSIONS = [
-  '.md', '.yaml', '.yml', '.ts', '.tsx', '.py', '.lua', '.js', '.jsx',
-  '.json', '.sql', '.sh', '.dockerfile', 'Dockerfile', '.txt', '.conf'
-];
+export { discoverLocalProjects, indexAllProjects, indexProject, indexProjectById };
 
-// Directories to exclude
-const EXCLUDE_DIRS = [
-  'node_modules', '.next', '.git', 'build', 'dist', 'out', 'coverage',
-  '__pycache__', '.venv', 'venv', 'target', '.idea', '.vscode'
-];
-
-// Files to exclude
-const EXCLUDE_FILES = [
-  '.DS_Store', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'
-];
-
-interface FileInfo {
-  path: string;
-  content: string;
-}
-
-interface Chunk {
-  repoPath: string;
-  filePath: string;
-  chunkIndex: number;
-  content: string;
-}
-
-export function shouldIncludeFile(filePath: string): boolean {
-  const fileName = path.basename(filePath);
-  const ext = path.extname(filePath);
-  
-  // Exclude specific files
-  if (EXCLUDE_FILES.includes(fileName)) return false;
-  
-  // Include README files
-  if (fileName.startsWith('README')) return true;
-  
-  // Include Dockerfile
-  if (fileName === 'Dockerfile' || fileName.endsWith('.dockerfile')) return true;
-  
-  // Include by extension
-  return INCLUDE_EXTENSIONS.includes(ext);
-}
-
-export function shouldExcludeDir(dirName: string): boolean {
-  return EXCLUDE_DIRS.includes(dirName);
-}
-
-export function scanDirectory(dirPath: string): FileInfo[] {
-  const files: FileInfo[] = [];
-  
-  function scan(currentPath: string) {
-    try {
-      const entries = fs.readdirSync(currentPath, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        const fullPath = path.join(currentPath, entry.name);
-        
-        if (entry.isDirectory()) {
-          if (!shouldExcludeDir(entry.name)) {
-            scan(fullPath);
-          }
-        } else if (entry.isFile()) {
-          if (shouldIncludeFile(fullPath)) {
-            try {
-              const content = fs.readFileSync(fullPath, 'utf-8');
-              // Skip binary files and very large files
-              if (content.length > 0 && content.length < 500000) {
-                files.push({
-                  path: fullPath,
-                  content,
-                });
-              }
-            } catch (err) {
-              console.error(`Error reading file ${fullPath}:`, err);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`Error scanning directory ${currentPath}:`, err);
-    }
-  }
-  
-  scan(dirPath);
-  return files;
-}
-
-export function scanRepos(repoPaths: string[]): Map<string, FileInfo[]> {
-  const repoFiles = new Map<string, FileInfo[]>();
-  
-  for (const repoPath of repoPaths) {
-    if (fs.existsSync(repoPath)) {
-      const files = scanDirectory(repoPath);
-      repoFiles.set(repoPath, files);
-    } else {
-      console.warn(`Repository path does not exist: ${repoPath}`);
-    }
-  }
-  
-  return repoFiles;
-}
-
-export function chunkFile(content: string, filePath: string): string[] {
-  const CHUNK_SIZE = 1000;
-  const OVERLAP = 200;
-  const chunks: string[] = [];
-  
-  // Split by lines first
-  const lines = content.split('\n');
-  let currentChunk = '';
-  let currentSize = 0;
-  
-  for (const line of lines) {
-    const lineSize = line.length + 1; // +1 for newline
-    
-    if (currentSize + lineSize > CHUNK_SIZE && currentChunk.length > 0) {
-      chunks.push(currentChunk);
-      
-      // Create overlap by keeping last few lines
-      const overlapLines = currentChunk.split('\n').slice(-5).join('\n');
-      currentChunk = overlapLines + '\n' + line;
-      currentSize = currentChunk.length;
-    } else {
-      currentChunk += (currentChunk ? '\n' : '') + line;
-      currentSize += lineSize;
-    }
-  }
-  
-  if (currentChunk) {
-    chunks.push(currentChunk);
-  }
-  
-  return chunks;
-}
-
-export async function generateEmbeddings(chunks: Chunk[]): Promise<number[][]> {
-  const modelConfig = getModelConfig();
-  const batchSize = 100;
-  const allEmbeddings: number[][] = [];
-  
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize);
-    // Truncate each chunk to max 2000 chars to avoid token limits
-    const texts = batch.map(c => c.content.substring(0, 2000));
-    
-    const response = await trackedOpenAICall(
-      'project-indexing',
-      modelConfig.embedding,
-      async () => {
-        return await openai.embeddings.create({
-          model: modelConfig.embedding,
-          input: texts,
-        });
-      },
-      (result) => ({
-        inputTokens: result.usage?.prompt_tokens || 0,
-        outputTokens: 0,
-      })
-    );
-    
-    const embeddings = response.data.map(d => d.embedding);
-    allEmbeddings.push(...embeddings);
-  }
-  
-  return allEmbeddings;
-}
-
-export async function indexRepositories(repoPaths: string[]): Promise<{
+/**
+ * Compatibility wrapper for the old `indexRepositories(repoPaths)`
+ * signature. Now delegates to local discovery in development only and
+ * indexes each discovered Project. In production it is a no-op.
+ */
+export async function indexRepositories(_repoPaths: string[]): Promise<{
   totalFiles: number;
   totalChunks: number;
   repos: { path: string; files: number; chunks: number }[];
 }> {
-  const repoFiles = scanRepos(repoPaths);
-  const allChunks: Chunk[] = [];
-  const repoStats: { path: string; files: number; chunks: number }[] = [];
-  
-  // Create chunks for all files
-  for (const [repoPath, files] of repoFiles.entries()) {
-    let repoChunkCount = 0;
-    
-    for (const file of files) {
-      const fileChunks = chunkFile(file.content, file.path);
-      
-      fileChunks.forEach((content, index) => {
-        allChunks.push({
-          repoPath,
-          filePath: file.path,
-          chunkIndex: index,
-          content,
-        });
-      });
-      
-      repoChunkCount += fileChunks.length;
+  // Discovery is dev-only; in production the legacy entrypoint should
+  // not be used at all. Callers that need ingestion should use the new
+  // upload / GitHub / rescan endpoints.
+  const discoveries = discoverLocalProjects();
+  for (const d of discoveries) {
+    try {
+      await indexProject(d.repoPath);
+    } catch (err) {
+      console.error(`indexRepositories: ${d.repoPath} failed`, err);
     }
-    
-    repoStats.push({
-      path: repoPath,
-      files: files.length,
-      chunks: repoChunkCount,
-    });
   }
-  
-  // Generate embeddings
-  const embeddings = await generateEmbeddings(allChunks);
-  
-  // Clear old chunks for these repos
-  for (const repoPath of repoPaths) {
-    await prisma.projectChunk.deleteMany({
-      where: { repoPath },
-    });
-  }
-  
-  // Insert new chunks with embeddings
-  for (let i = 0; i < allChunks.length; i++) {
-    const chunk = allChunks[i];
-    const embedding = embeddings[i];
-    
-    // Create chunk without embedding (Prisma can't handle Unsupported vector type directly)
-    const created = await prisma.projectChunk.create({
-      data: {
-        repoName: chunk.repoPath.split('/').pop() || 'unknown',
-        repoPath: chunk.repoPath,
-        filePath: chunk.filePath,
-        chunkIndex: chunk.chunkIndex,
-        content: chunk.content,
-      } as any,
-    });
-
-    // Store embedding as native pgvector value
-    const embeddingStr = `[${embedding.join(',')}]`;
-    await prisma.$executeRaw`
-      UPDATE "ProjectChunk"
-      SET embedding = ${embeddingStr}::vector
-      WHERE id = ${created.id}
-    `;
-  }
-  
   return {
-    totalFiles: Array.from(repoFiles.values()).reduce((sum, files) => sum + files.length, 0),
-    totalChunks: allChunks.length,
-    repos: repoStats,
+    totalFiles: discoveries.length,
+    totalChunks: 0,
+    repos: discoveries.map((d) => ({ path: d.repoPath, files: 0, chunks: 0 })),
   };
 }

@@ -3,24 +3,29 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider   = "postgresql"
-  extensions = [vector]
+  // extensions = [vector]  // Disabled: pgvector not available on current DB
 }
 
 model User {
-  id                String               @id @default(cuid())
-  email             String               @unique
-  passwordHash      String
-  resumeText        String?              @db.Text
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-  interviewSessions InterviewSession[]
-  teachBackSessions TeachBackSession[]
-  quizSessions      ProjectQuizSession[]
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String
+  resumeText          String?              @db.Text
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  interviewSessions   InterviewSession[]
+  teachBackSessions   TeachBackSession[]
+  quizSessions        ProjectQuizSession[]
+  projects            Project[]
+  drills              Drill[]
+  githubConnection    GitHubConnection?
+  questionBankEntries QuestionBankEntry[]
+  resumeProfile       ResumeProfile?
+  streak              Streak?
 }
 
 model InterviewSession {
@@ -47,45 +52,181 @@ model InterviewSession {
 }
 
 model InterviewQuestion {
-  id                String           @id @default(cuid())
-  sessionId         String
-  session           InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  questionText      String           @db.Text
-  aiResponse        String?          @db.Text
-  userResponse      String           @db.Text
-  score             Float
-  feedback          String           @db.Text
-  timeSpent         Int              // in seconds
-  createdAt         DateTime         @default(now())
+  id           String           @id @default(cuid())
+  sessionId    String
+  session      InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionText String           @db.Text
+  aiResponse   String?          @db.Text
+  userResponse String           @db.Text
+  score        Float
+  feedback     String           @db.Text
+  timeSpent    Int // in seconds
+  createdAt    DateTime         @default(now())
 
   @@index([sessionId])
 }
 
+model Project {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repoName        String
+  ingestionSource String // 'github' | 'zip' | 'local_path'
+  repoPath        String?
+  cloneUrl        String?
+  defaultBranch   String?
+  status          String          @default("pending") // pending | cloning | indexing | indexed | partial_indexed | failed
+  partialReason   String?
+  fileCount       Int             @default(0)
+  lastIndexedAt   DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  summary         ProjectSummary?
+  chunks          ProjectChunk[]
+  drillQuestions  DrillQuestion[]
+  cheatsheets     Cheatsheet[]
+
+  @@unique([userId, repoName])
+  @@index([userId])
+}
+
 model ProjectChunk {
-  id         String   @id @default(cuid())
+  id         String                       @id @default(cuid())
+  projectId  String?
+  project    Project?                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   repoName   String
   repoPath   String
   filePath   String
   chunkIndex Int
-  content    String   @db.Text
-  embedding  Unsupported("vector(1536)")?
-  metadata   Json     @default("{}") // { language, fileType, summary, etc }
-  createdAt  DateTime @default(now())
+  content    String                       @db.Text
+  embedding  String?                      @db.Text // was vector(1536), pgvector not available
+  metadata   Json                         @default("{}") // { language, fileType, summary, etc }
+  createdAt  DateTime                     @default(now())
 
+  @@index([projectId])
   @@index([repoName])
   @@index([repoPath])
 }
 
 model ProjectSummary {
-  id          String   @id @default(cuid())
-  repoName    String   @unique
+  id          String                       @id @default(cuid())
+  projectId   String?                      @unique
+  project     Project?                     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repoName    String                       @unique
   repoPath    String
-  description String   @db.Text
-  techStack   Json     // array of technologies
-  highlights  Json     // key features/achievements
-  embedding   Unsupported("vector(1536)")?
+  description String                       @db.Text
+  techStack   Json // array of technologies
+  highlights  Json // key features/achievements
+  embedding   String?                      @db.Text // was vector(1536), pgvector not available
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+}
+
+model GitHubConnection {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  encryptedAccessToken Bytes
+  scope                String
+  githubLogin          String
+  status               String   @default("active") // active | invalid
+  updatedAt            DateTime @updatedAt
+}
+
+model QuestionBankEntry {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionType   String // Code_Tracing | Modification | Design_Rationale | Debugging | Tradeoffs | Scaling | Security | Behavioral
+  prompt         String   @db.Text
+  modelAnswer    String   @db.Text
+  rubric         String?  @db.Text
+  tags           Json     @default("[]")
+  difficultyTier String // Easy | Medium | Hard | Staff
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, questionType])
+}
+
+model ResumeProfile {
+  id                 String   @id @default(cuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeText         String?  @db.Text
+  linkedinUrl        String?
+  linkedinHighlights Json     @default("[]")
+  parseError         String?
+  updatedAt          DateTime @updatedAt
+}
+
+model Drill {
+  id               String          @id @default(cuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode             String // 'Text' | 'Voice'
+  configJson       Json // full Drill_Config snapshot
+  status           String          @default("pending") // pending | in_progress | ended | ended_by_budget_guard | failed | cost_capped | transcript_partial
+  vapiCallId       String?
+  recordingUrl     String?
+  transcript       String?         @db.Text
+  transcriptStatus String          @default("none") // none | partial | full
+  overallScore     Float?
+  weakAreas        Json            @default("[]")
+  remediation      Json            @default("[]")
+  voiceMetrics     Json?
+  costUsd          Float           @default(0)
+  createdAt        DateTime        @default(now())
+  endedAt          DateTime?
+  questions        DrillQuestion[]
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+model DrillQuestion {
+  id           String   @id @default(cuid())
+  drillId      String
+  drill        Drill    @relation(fields: [drillId], references: [id], onDelete: Cascade)
+  projectId    String?
+  project      Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  questionType String
+  prompt       String   @db.Text
+  modelAnswer  String?  @db.Text
+  filePaths    Json     @default("[]")
+  userAnswer   String?  @db.Text
+  score        Float?
+  feedback     String?  @db.Text
+  createdAt    DateTime @default(now())
+
+  @@index([drillId])
+  @@index([projectId])
+}
+
+model Cheatsheet {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contentJson Json
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+}
+
+model Streak {
+  userId        String    @id
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentStreak Int       @default(0)
+  longestStreak Int       @default(0)
+  lastDrillDate DateTime?
+}
+
+model MigrationLog {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  payload   Json
+  createdAt DateTime @default(now())
 }
 
 model LeetCodeEntry {
@@ -119,13 +260,19 @@ model JobApplication {
 }
 
 model CostRecord {
-  id            String   @id @default(cuid())
-  feature       String
-  model         String
-  inputTokens   Int
-  outputTokens  Int
-  estimatedCost Float
-  createdAt     DateTime @default(now())
+  id                  String   @id @default(cuid())
+  feature             String
+  model               String
+  inputTokens         Int
+  outputTokens        Int
+  estimatedCost       Float
+  vapiCallId          String?
+  callDurationSeconds Int?
+  vapiMinutes         Float?
+  createdAt           DateTime @default(now())
+
+  @@index([feature])
+  @@index([createdAt])
 }
 
 model TeachBackSession {

@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import { chatWithClaude } from '@/lib/claude';
 
 // Store conversation state in memory (in production, use Redis or database)
 const conversationState = new Map<string, {
@@ -90,13 +86,13 @@ export async function POST(request: NextRequest) {
       });
 
       // Get AI response
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: state.messages as any,
-        max_tokens: 300,
+      const nonSystemMessages = state.messages.filter(m => m.role !== 'system');
+      const aiResponse = await chatWithClaude({
+        feature: 'interview-live-poll',
+        systemPrompt: state.systemPrompt || 'You are an expert technical interviewer.',
+        userMessage: nonSystemMessages.map(m => `${m.role}: ${m.content}`).join('\n\n'),
+        maxTokens: 300,
       });
-
-      const aiResponse = completion.choices[0].message.content || '';
       state.messages.push({
         role: 'assistant',
         content: aiResponse,
@@ -186,17 +182,15 @@ Provide detailed feedback in JSON format:
   ]
 }`;
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'You are an expert interview coach providing structured feedback.' },
-      { role: 'user', content: prompt },
-    ],
-    response_format: { type: 'json_object' },
-    max_tokens: 1500,
+  const raw = await chatWithClaude({
+    feature: 'interview-live-feedback',
+    systemPrompt: 'You are an expert interview coach providing structured feedback. Respond with valid JSON only.',
+    userMessage: prompt,
+    maxTokens: 1500,
+    json: true,
   });
 
-  const feedback = JSON.parse(completion.choices[0].message.content || '{}');
+  const feedback = JSON.parse(raw || '{}');
 
   // Update individual questions with scores and feedback
   if (feedback.questionFeedback) {

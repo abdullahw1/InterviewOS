@@ -1,23 +1,15 @@
-import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
 
-// Pricing per 1M tokens (as of 2024)
+// Claude Haiku 4.5 pricing per 1M tokens
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  'gpt-4o': { input: 2.5, output: 10.0 },
-  'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  'text-embedding-3-small': { input: 0.02, output: 0 },
-  'whisper-1': { input: 0.006, output: 0 }, // per minute, approximated
+  'claude-haiku-4-5-20251001': { input: 0.80, output: 4.00 },
+  'claude-haiku-4-5': { input: 0.80, output: 4.00 },
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
 };
 
-function estimateCost(
-  model: string,
-  inputTokens: number,
-  outputTokens: number
-): number {
-  const pricing = MODEL_PRICING[model] || { input: 0, output: 0 };
-  const inputCost = (inputTokens / 1_000_000) * pricing.input;
-  const outputCost = (outputTokens / 1_000_000) * pricing.output;
-  return inputCost + outputCost;
+function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[model] ?? { input: 1.0, output: 5.0 };
+  return (inputTokens / 1_000_000) * pricing.input + (outputTokens / 1_000_000) * pricing.output;
 }
 
 export async function trackedOpenAICall<T>(
@@ -28,7 +20,6 @@ export async function trackedOpenAICall<T>(
 ): Promise<T> {
   const result = await apiCall();
   const usage = getUsage(result);
-
   const estimatedCost = estimateCost(model, usage.inputTokens, usage.outputTokens);
 
   await prisma.costRecord.create({
@@ -43,5 +34,3 @@ export async function trackedOpenAICall<T>(
 
   return result;
 }
-
-export type { OpenAI };
